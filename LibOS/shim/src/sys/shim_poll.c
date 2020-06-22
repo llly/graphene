@@ -156,11 +156,13 @@ static int _shim_do_poll(struct pollfd* fds, nfds_t nfds, int timeout_ms) {
 
             fds[i].revents = 0;
             if (ret_events[fds_mapping[i].idx] & PAL_WAIT_ERROR)
-                fds[i].revents |= POLLERR | POLLHUP;
-            if (ret_events[fds_mapping[i].idx] & PAL_WAIT_READ)
-                fds[i].revents |= fds[i].events & (POLLIN | POLLRDNORM);
-            if (ret_events[fds_mapping[i].idx] & PAL_WAIT_WRITE)
-                fds[i].revents |= fds[i].events & (POLLOUT | POLLWRNORM);
+                fds[i].revents |= POLLERR | POLLHUP |  POLLNVAL;
+            else {
+                if (ret_events[fds_mapping[i].idx] & PAL_WAIT_READ)
+                    fds[i].revents |= fds[i].events & (POLLIN | POLLRDNORM);
+                if (ret_events[fds_mapping[i].idx] & PAL_WAIT_WRITE)
+                    fds[i].revents |= fds[i].events & (POLLOUT | POLLWRNORM);
+            }
 
             if (fds[i].revents)
                 nrevents++;
