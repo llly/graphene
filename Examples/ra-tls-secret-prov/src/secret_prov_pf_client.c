@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sys/sendfile.h>
 
 #define INPUT_FILENAME "files/input.txt"
 
@@ -24,6 +25,18 @@ int main(int argc, char** argv) {
     if (fd < 0) {
         fprintf(stderr, "[error] cannot open '" INPUT_FILENAME "'\n");
         return 1;
+    }
+    int out_fd = open("files/out.txt", O_RDWR|O_CREAT);
+    if (out_fd < 0) {
+        fprintf(stderr, "[error] open\n");
+        return -1;
+    }
+    ssize_t bytes_send = sendfile(out_fd, fd, NULL, 8192);
+    close(out_fd);
+    if (bytes_send  = -1) {
+            fprintf(stderr, "[error] sendfile\n");
+            close(fd);
+            return 1;
     }
 
     char buf[1024] = {0};
