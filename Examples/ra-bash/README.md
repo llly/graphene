@@ -16,7 +16,7 @@ more documentation, refer to `Pal/src/host/Linux-SGX/tools/README.rst`.
 
 ## Secret Provisioning server
 
-Reuse server of [ra-tls-secret-prov](../ra-tls-secret-prov), check [READ.md](../ra-tls-secret-prov/README.md).
+Reuse server of [ra-tls-secret-prov](../ra-tls-secret-prov), check [README.md](../ra-tls-secret-prov/README.md).
 
 ## Bash as Secret Provisioning clients
 
@@ -40,7 +40,7 @@ Please make sure that the corresponding RA-TLS libraries (EPID or DCAP versions)
 make -C ../../Pal/src/host/Linux-SGX/tools dcap
 ```
 
-#start server
+- start server
 ```sh
 pushd ../ra-tls-secret-prov
 
@@ -51,14 +51,12 @@ RA_TLS_ALLOW_OUTDATED_TCB_INSECURE=1 ./secret_prov_server_dcap &
 popd
 ```
 
-# test bash and ls as client
+- test bash and ls as client
 ```sh
+
 SGX=1 ./pal_loader bash.manifest.sgx -c "ls \$SECRET_PROVISION_SECRET_STRING"
-```
-expected result:
-```sh
-ls: cannot access 'ffeeddccbbaa99887766554433221100': No such file or directory
-```
+#expected result:
+#ls: cannot access 'ffeeddccbbaa99887766554433221100': No such file or directory
 
 kill %%
 ```
