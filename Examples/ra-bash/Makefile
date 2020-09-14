@@ -23,11 +23,13 @@ endif
 .PHONY: all
 all: bash.manifest $(addsuffix .manifest,$(PROGRAMS)) pal_loader
 ifeq ($(SGX),1)
-all: bash.token $(addsuffix .token,$(PROGRAMS)) dcap
+all: bash.token $(addsuffix .token,$(PROGRAMS)) dcap secret_prov_server_dcap_graphene.token
 endif
 
 .PHONY: dcap
-dcap: secret_prov_server_dcap libsecret_prov_attest.so libsecret_prov_verify_dcap.so
+dcap: secret_prov_server_dcap secret_prov_server_dcap_graphene \
+	libsecret_prov_attest.so libsecret_prov_verify_dcap.so \
+	libsecret_prov_verify_dcap_graphene.so
 
 include ../../Scripts/Makefile.configs
 
@@ -85,6 +87,11 @@ secret_prov_server_dcap: src/secret_prov_server.c libsecret_prov_verify_dcap.so 
 			 libmbedcrypto.so libmbedtls.so libmbedx509.so
 	$(CC) $< $(CFLAGS) $(LFLAGS) -Wl,--no-as-needed -lsgx_urts -lsecret_prov_verify_dcap -pthread -o $@
 
+secret_prov_server_dcap_graphene: src/secret_prov_server.c libsecret_prov_verify_dcap_graphene.so \
+			 libmbedcrypto.so libmbedtls.so libmbedx509.so
+	$(CC) $< $(CFLAGS) $(LFLAGS) -lsecret_prov_verify_dcap_graphene -pthread -o $@
+
+
 secret_prov_client: src/secret_prov_client.c libsecret_prov_attest.so \
 		    libmbedcrypto.so libmbedtls.so libmbedx509.so
 	$(CC) $< $(CFLAGS) $(LFLAGS) -lsecret_prov_attest -o $@
@@ -121,6 +128,8 @@ libsecret_prov_attest.so:
 libsecret_prov_verify_dcap.so: libmbedcrypto.so libmbedx509.so libmbedtls.so libsgx_util.so
 	cp $(GRAPHENEDIR)/Pal/src/host/Linux-SGX/tools/ra-tls/$@ .
 
+libsecret_prov_verify_dcap_graphene.so: libmbedcrypto.so libmbedx509.so libmbedtls.so libsgx_util.so
+	cp $(GRAPHENEDIR)/Pal/src/host/Linux-SGX/tools/ra-tls/$@ .
 
 
 # Program dependencies (generate from ldd):
@@ -135,6 +144,10 @@ libsecret_prov_verify_dcap.so: libmbedcrypto.so libmbedx509.so libmbedtls.so lib
 # from the ldd results. This list also contains some runtime deps of Bash.
 GLIBC_DEPS = linux-vdso /lib64/ld-linux-x86-64 libc libm librt libdl libutil libpthread \
              libselinux libpcre libacl libattr
+
+GLIBC_DEPS2 = linux-vdso.so.1 /lib64/ld-linux-x86-64.so.2 libc.so.6 libm.so.6 librt.so.1 \
+                         libdl.so.2 libpthread.so.0 libutil.so.1 libresolv.so.2 libnss_dns.so.2
+
 
 # Listing all Bash dependencies, besides Glibc libraries
 .INTERMEDIATE: $(addsuffix .deps,bash $(PROGRAMS))
@@ -159,7 +172,7 @@ trusted-children:
 		echo -n "sgx.trusted_files.$$F    = file:`which $$F`\\\\n"; \
 		done > $@
 
-bash.manifest: manifest.template trusted-children bash.trusted-libs
+bash.manifest: bash.manifest.template trusted-children bash.trusted-libs
 	sed -e 's|$$(GRAPHENEDIR)|'"$(GRAPHENEDIR)"'|g' \
 		-e 's|$$(GRAPHENEDEBUG)|'"$(GRAPHENEDEBUG)"'|g' \
 		-e 's|$$(ARGV0_OVERRIDE)|bash|g' \
@@ -188,6 +201,50 @@ bash.manifest.sgx: bash.manifest $(addsuffix .manifest.sgx,$(PROGRAMS)) dcap
 		-libpal $(GRAPHENEDIR)/Runtime/libpal-Linux-SGX.so \
 		-key $(SGX_SIGNER_KEY) \
 		-manifest $< -output $@
+
+
+# List all the dcap dependencies, besides Glibc libraries
+.INTERMEDIATE: secret_prov_server_dcap_graphene-list
+secret_prov_server_dcap_graphene-list: secret_prov_server_dcap_graphene libsecret_prov_verify_dcap_graphene.so
+	@ldd secret_prov_server_dcap_graphene > $@
+	@ldd libsecret_prov_verify_dcap_graphene.so >> $@
+	@ldd /usr/$(ARCH_LIBDIR)/libdcap_quoteprov.so >> $@
+
+.INTERMEDIATE: secret_prov_server_dcap_graphene-deps
+secret_prov_server_dcap_graphene-deps: secret_prov_server_dcap_graphene-list
+	@cat $< | \
+                awk '{if ($$2 =="=>") {print $$3}}' | \
+                sort | uniq | grep -v $(patsubst %,-e %,$(GLIBC_DEPS2)) > $@
+	@echo "/usr/$(ARCH_LIBDIR)/libdcap_quoteprov.so.1" >> $@
+
+# Generate manifest rules for dcap dependencies
+.INTERMEDIATE: secret_prov_server_dcap_graphene-trusted-libs
+secret_prov_server_dcap_graphene-trusted-libs: secret_prov_server_dcap_graphene-deps
+	@for F in `cat $<`; do \
+                N=`basename $$F | tr --delete '.' | tr --delete '-' | tr --delete '+'`; \
+                echo -n "sgx.trusted_files.$$N = file:$$F\\\\n"; \
+        done > $@
+
+
+secret_prov_server_dcap_graphene.manifest: secret_prov_server_dcap_graphene.manifest.template secret_prov_server_dcap_graphene-trusted-libs
+	sed -e 's|$$(GRAPHENEDIR)|'"$(GRAPHENEDIR)"'|g' \
+		-e 's|$$(GRAPHENEDEBUG)|'"$(GRAPHENEDEBUG)"'|g' \
+		-e 's|$$(CLIENT_TRUSTED_LIBS)|'"`cat secret_prov_server_dcap_graphene-trusted-libs`"'|g' \
+		-e 's|$$(RA_TLS_VERIFY_LIB)|'"libsecret_prov_verify_dcap_graphene.so"'|g' \
+		-e 's|$$(ARCH_LIBDIR)|'"$(ARCH_LIBDIR)"'|g' \
+		$< > $@
+
+secret_prov_server_dcap_graphene.manifest.sgx: secret_prov_server_dcap_graphene.manifest mbedtls/CMakeLists.txt
+	$(GRAPHENEDIR)/Pal/src/host/Linux-SGX/signer/pal-sgx-sign \
+		-libpal $(GRAPHENEDIR)/Runtime/libpal-Linux-SGX.so \
+		-key $(SGX_SIGNER_KEY) \
+		-manifest $< -output $@ \
+		-exec secret_prov_server_dcap_graphene
+
+secret_prov_server_dcap_graphene.sig: secret_prov_server_dcap_graphene.manifest.sgx
+
+secret_prov_server_dcap_graphene.token: secret_prov_server_dcap_graphene.sig
+	$(GRAPHENEDIR)/Pal/src/host/Linux-SGX/signer/pal-sgx-get-token -output $@ -sig $<
 
 bash.sig: bash.manifest.sgx
 

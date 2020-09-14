@@ -9,7 +9,7 @@ loader.exec = file:$(EXECPATH)
 loader.argv0_override = $(ARGV0_OVERRIDE)
 
 # Secret Provisioning library (client-side) is preloaded
-#loader.env.LD_PRELOAD = ./libsecret_prov_attest.so
+loader.env.LD_PRELOAD = ./libsecret_prov_attest.so
 
 # Read application arguments directly from the command line. Don't use this on production!
 loader.insecure__use_cmdline_argv = 1
@@ -98,7 +98,7 @@ sgx.trusted_files.libmbedcrypto = file:libmbedcrypto.so.4
 sgx.trusted_files.libmbedtls    = file:libmbedtls.so.13
 sgx.trusted_files.libmbedx509   = file:libmbedx509.so.1
 
-#sgx.trusted_files.libsecretprovattest = file:libsecret_prov_attest.so
+sgx.trusted_files.libsecretprovattest = file:libsecret_prov_attest.so
 
 sgx.trusted_files.cachain = file:certs/test-ca-sha256.crt
 

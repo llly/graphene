@@ -40,6 +40,9 @@ libsecret_prov_verify_epid.so: ra_tls_verify_common.o ra_tls_verify_epid.o secre
 libsecret_prov_verify_dcap.so: ra_tls_verify_common.o ra_tls_verify_dcap.o secret_prov_common.o secret_prov_verify.o
 	$(CC) $^ $(LDFLAGS) -L../common -lsgx_util -lmbedcrypto -lmbedx509 -lmbedtls -lsgx_dcap_quoteverify -shared -o $@
 
+libsecret_prov_verify_dcap_graphene.so: ra_tls_verify_common.o ra_tls_verify_dcap.o secret_prov_common.o secret_prov_verify.o ra_tls_verify_dcap_urts.o
+	$(CC) $^ $(LDFLAGS) -L../common -lsgx_util -lmbedcrypto -lmbedx509 -lmbedtls -lsgx_dcap_quoteverify -shared -o $@
+
 .PHONY: clean
 clean:
 	$(RM) *.o *.so
