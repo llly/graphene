@@ -13,6 +13,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <sgx_report.h>
+
 #include "secret_prov.h"
 
 #define EXPECTED_STRING "MORE"
@@ -24,7 +26,35 @@
 static pthread_mutex_t g_print_lock;
 char g_secret_pf_key_hex[WRAP_KEY_SIZE * 2 + 1] = "1122334455667788";
 
+static ssize_t rw_file(const char* path, uint8_t* buf, size_t len, int do_write) {
+    ssize_t bytes = 0;
+    ssize_t ret   = 0;
 
+    int fd = open(path, do_write ? O_WRONLY : O_RDONLY);
+    if (fd < 0)
+        return fd;
+
+    while ((ssize_t)len > bytes) {
+        if (do_write)
+            ret = write(fd, buf + bytes, len - bytes);
+        else
+            ret = read(fd, buf + bytes, len - bytes);
+
+        if (ret > 0) {
+            bytes += ret;
+        } else if (ret == 0) {
+            /* end of file */
+            break;
+        } else {
+            if (ret < 0 && (errno == EAGAIN || errno == EINTR))
+                continue;
+            break;
+        }
+    }
+
+    close(fd);
+    return ret < 0 ? ret : bytes;
+}
 static int getenv_client_inside_sgx() {
     char* str = getenv("RA_TLS_CLIENT_INSIDE_SGX");
     if (!str)
@@ -40,11 +70,11 @@ static void hexdump_mem(const void* data, size_t size) {
     printf("\n");
 }
 
+
 /* our own callback to verify SGX measurements during TLS handshake */
 static int verify_measurements_callback(const char* mrenclave, const char* mrsigner,
                                         const char* isv_prod_id, const char* isv_svn) {
     assert(mrenclave && mrsigner && isv_prod_id && isv_svn);
-
     pthread_mutex_lock(&g_print_lock);
     puts("Received the following measurements from the client:");
     printf("  - MRENCLAVE:   "); hexdump_mem(mrenclave, 32);
@@ -55,6 +85,55 @@ static int verify_measurements_callback(const char* mrenclave, const char* mrsig
     pthread_mutex_unlock(&g_print_lock);
 
     return 0;
+}
+
+/* our own callback to verify SGX measurements during TLS handshake */
+static int sgx_verify_measurements_callback(const char* mrenclave, const char* mrsigner,
+                                        const char* isv_prod_id, const char* isv_svn) {
+    assert(mrenclave && mrsigner && isv_prod_id && isv_svn); 
+    ssize_t bytes;
+    /* 1. read `my_target_info` file */
+    sgx_target_info_t target_info;
+    bytes = rw_file("/dev/attestation/my_target_info", (char*)&target_info, sizeof(target_info),
+                      /*do_write=*/0);
+    if (bytes != sizeof(target_info)) {
+            return -1;
+    }
+
+    /* 2. write data from `my_target_info` to `target_info` file */
+    bytes = rw_file("/dev/attestation/target_info", (char*)&target_info, sizeof(target_info),
+                      /*do_write=*/1);
+    if (bytes != sizeof(target_info)) {
+            return -1;
+    }
+
+    /* 3. write some custom data to `user_report_data` file */
+    sgx_report_data_t user_report_data = {0};
+    bytes = rw_file("/dev/attestation/user_report_data", (char*)&user_report_data,
+                      sizeof(user_report_data), /*do_write=*/1);
+    if (bytes != sizeof(user_report_data)) {
+            return -1;
+    }
+        sgx_report_t report;
+        ssize_t report_size = rw_file("/dev/attestation/report", (uint8_t*)&report, sizeof(sgx_report_t),
+                                    /*do_write=*/0);
+        if (report_size != sizeof(sgx_report_t)) {
+            return -1;
+        }
+        //if (g_verify_mrenclave &&
+        //    memcmp(mrenclave, g_expected_mrenclave, sizeof(g_expected_mrenclave)))
+        //return -1;
+
+        if (memcmp(mrsigner, &report.body.mr_signer, sizeof(report.body.mr_signer)))
+            return -1;
+
+        if (memcmp(isv_prod_id, &report.body.isv_prod_id, sizeof(report.body.isv_prod_id)))
+            return -1;
+
+        if (memcmp(isv_svn, &report.body.isv_svn, sizeof(report.body.isv_svn)))
+            return -1;
+
+        return 0;
 }
 
 /* this callback is called in a new thread associated with a client; be careful to make this code
@@ -109,6 +188,9 @@ int main(int argc, char** argv) {
     ret = pthread_mutex_init(&g_print_lock, NULL);
     if (ret < 0)
         return ret;
+
+    int in_sgx = getenv_client_inside_sgx();
+
     while(0) {
     puts("--- Reading the master key for protected files from '" WRAP_KEY_FILENAME "' ---");
     int fd = open(WRAP_KEY_FILENAME, O_RDONLY);
@@ -199,7 +281,7 @@ out:
     puts("--- Starting the Secret Provisioning server on port 4433 ---");
     ret = secret_provision_start_server((uint8_t*)g_secret_pf_key_hex, sizeof(g_secret_pf_key_hex),
                                         "4433", "certs/server2-sha256.crt", "certs/server2.key",
-                                        verify_measurements_callback,
+                                        in_sgx? sgx_verify_measurements_callback:verify_measurements_callback,
                                         communicate_with_client_callback);
     if (ret < 0) {
         fprintf(stderr, "[error] secret_provision_start_server() returned %d\n", ret);

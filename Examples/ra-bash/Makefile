@@ -7,6 +7,13 @@
 #
 # Use `make clean` to remove Graphene-generated files.
 
+SGX_SDK ?= /opt/intel/sgxsdk
+SGX_MODE ?= HW
+SGX_ARCH ?= x64
+SGX_DEBUG ?= 1
+
+include $(SGX_SDK)/buildenv.mk
+
 # Listing the programs to be run inside the bash script
 PROGRAMS = ls cat rm cp date
 
@@ -73,7 +80,7 @@ mbedtls/CMakeLists.txt: $(MBEDTLS_SRC) $(MBEDCRYPTO_SRC)
 
 ######################### CLIENT/SERVER EXECUTABLES ###########################
 
-CFLAGS += -Wall -std=c11 -I$(GRAPHENEDIR)/Pal/src/host/Linux-SGX/tools/ra-tls
+CFLAGS += -Wall -std=c11 -I$(GRAPHENEDIR)/Pal/src/host/Linux-SGX/tools/ra-tls -I$(SGX_SDK)/include
 LFLAGS += -Wl,-rpath,. -L. -lmbedcrypto -lmbedtls -lmbedx509
 
 secret_prov_server_epid: src/secret_prov_server.c libsecret_prov_verify_epid.so \
