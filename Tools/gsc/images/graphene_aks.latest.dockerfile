@@ -31,7 +31,7 @@ RUN cd /graphene/Pal/src/host/Linux-SGX/sgx-driver \
     && git checkout DCAP_1.7 && cp -r driver/linux/* .
 
 # Build Graphene-SGX
-RUN cd /graphene && ISGX_DRIVER_PATH=/graphene/Pal/src/host/Linux-SGX/sgx-driver/linux-sgx-driver \
+RUN cd /graphene && ISGX_DRIVER_PATH=/graphene/Pal/src/host/Linux-SGX/sgx-driver/linux-sgx-driver/driver/linux \
     make -s -j4 SGX=1 WERROR=1 \
      && true
 

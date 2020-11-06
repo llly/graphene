@@ -31,7 +31,7 @@ RUN cd /graphene/Pal/src/host/Linux-SGX/sgx-driver \
     && git checkout {{SGXDriver.Branch}}
 
 # Build Graphene-SGX
-RUN cd /graphene && ISGX_DRIVER_PATH=/graphene/Pal/src/host/Linux-SGX/sgx-driver/linux-sgx-driver \
+RUN cd /graphene && ISGX_DRIVER_PATH=/graphene/Pal/src/host/Linux-SGX/sgx-driver/linux-sgx-driver/driver/linux \
     make -s -j4 SGX=1 {% if debug %} DEBUG=1 {% endif %}WERROR=1 \
     {% if linux %} && make -s -j4 WERROR=1{% if debug %} DEBUG=1{% endif %}{% else %} && true{%endif %}
 

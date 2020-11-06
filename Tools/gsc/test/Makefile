@@ -1,8 +1,8 @@
 TESTCASES ?= python3 python3-trusted-args base-python3 hello-world nodejs bash numpy pytorch
 DISTRIBUTIONS ?= ubuntu18.04
 GRAPHENE_BRANCH ?= master
-DOCKER_BUILD_FLAGS ?= --rm --no-cache
-GSC_BUILD_FLAGS ?= --rm --no-cache
+DOCKER_BUILD_FLAGS ?= --rm --no-cache --build-arg https_proxy=${HTTPS_PROXY} --build-arg http_proxy=${HTTP_PROXY}
+GSC_BUILD_FLAGS ?= --rm --no-cache --build-arg https_proxy=${HTTPS_PROXY} --build-arg http_proxy=${HTTP_PROXY}
 TESTS = $(foreach D,$(DISTRIBUTIONS),$(foreach T,$(TESTCASES),$D-$T))
 MAXTESTNUM ?= 12
 KEY_FILE ?= ../enclave-key.pem
