@@ -345,6 +345,13 @@ static int tcp_connect(PAL_HANDLE* handle, char* uri, int options) {
     if (bind_addr && bind_addr->sa_family != dest_addr->sa_family)
         return -PAL_ERROR_INVAL;
 
+    if (!bind_addr) {
+       /*bind_addr pointer and dest_addr pointer are swapped in socket_parse_uri()*/
+       bind_addr = (struct sockaddr*)&buffer[1];
+       bind_addr->sa_family = 0;
+       bind_addrlen = sizeof(buffer[1]);
+    }
+
     struct sockopt sock_options;
 
     memset(&sock_options, 0, sizeof(sock_options));
