@@ -6,6 +6,7 @@
 #include "debug_map.h"
 
 #include <asm/errno.h>
+#include <stddef.h>
 
 #include "spinlock.h"
 
