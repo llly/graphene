@@ -464,6 +464,9 @@ extern struct shim_d_ops chroot_d_ops;
 extern struct shim_fs_ops str_fs_ops;
 extern struct shim_d_ops str_d_ops;
 
+extern struct shim_fs_ops tmp_fs_ops;
+extern struct shim_d_ops tmp_d_ops;
+
 extern struct shim_mount chroot_builtin_fs;
 extern struct shim_mount pipe_builtin_fs;
 extern struct shim_mount fifo_builtin_fs;
@@ -534,6 +537,22 @@ int pseudo_stat(struct shim_dentry* dent, struct stat* buf, const struct pseudo_
 int pseudo_hstat(struct shim_handle* hdl, struct stat* buf, const struct pseudo_ent* root_ent);
 int pseudo_follow_link(struct shim_dentry* dent, struct shim_qstr* link,
                        const struct pseudo_ent* root_ent);
+
+
+int chroot_mount(const char* uri, void** mount_data);
+int chroot_unmount(void* mount_data);
+ int chroot_open(struct shim_handle* hdl, struct shim_dentry* dent, int flags);
+    int chroot_lookup(struct shim_dentry* dent);
+    int chroot_mode(struct shim_dentry* dent, mode_t* mode);
+    int chroot_dput(struct shim_dentry* dent);
+    int chroot_creat(struct shim_handle* hdl, struct shim_dentry* dir, struct shim_dentry* dent,
+                 int flags, mode_t mode);
+    int chroot_unlink(struct shim_dentry* dir, struct shim_dentry* dent);
+    int chroot_mkdir(struct shim_dentry* dir, struct shim_dentry* dent, mode_t mode);
+    int chroot_stat(struct shim_dentry* dent, struct stat* buf);
+    int chroot_chmod(struct shim_dentry* dent, mode_t mode);
+    int chroot_rename(struct shim_dentry* old, struct shim_dentry* new);
+    int chroot_readdir(struct shim_dentry* dent, struct shim_dirent** dirent);
 
 /* string-type file system */
 int str_add_dir(const char* path, mode_t mode, struct shim_dentry** dent);
