@@ -63,6 +63,11 @@ static struct shim_tmpfs_data* __create_data(void) {
     return data;
 }
 
+static void __destroy_data(struct shim_tmpfs_data* data) {
+    destroy_lock(&data->lock);
+    free(data);
+}
+
 /* create a data in the dentry and compose it's uri. dent->lock needs to
    be held */
 static int create_data(struct shim_dentry* dent) {
@@ -122,6 +127,10 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
         if (flags & O_CREAT)
         {
             data->type = FILE_REGULAR;
+            dent->type = S_IFREG;
+            
+            //always keep handle for tmpfs until unlink
+            get_handle(hdl);
         }
         else
         {
@@ -132,38 +141,20 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
     REF_INC(data->str_data.ref_count);
 
     hdl->dentry = dent;
-    hdl->flags  = flags;
-    
     hdl->type     = TYPE_STR;
     hdl->flags    = flags;
     hdl->acc_mode = ACC_MODE(flags & O_ACCMODE);
     hdl->info.str.data = &data->str_data;
-    //always keep handle for tmpfs until unlink
-    get_handle(hdl);
     unlock(&data->lock);
 
     return 0;
 }
 
 static int tmpfs_dput(struct shim_dentry* dent) {
-    struct shim_tmpfs_data* tmpfs_data = dent->data;
-    struct shim_str_data* data = &tmpfs_data->str_data;
+    //struct shim_tmpfs_data* tmpfs_data = dent->data;
+    //struct shim_str_data* data = &tmpfs_data->str_data;
 
-    if (!data || REF_DEC(data->ref_count) > 1)
-        return 0;
-#if 0
-    if (data->str) {
-        free(data->str);
-        data->str = NULL;
-    }
-
-    data->len      = 0;
-    data->buf_size = 0;
-
-    free(dent->data);
-    dent->data = NULL;
-#endif
-    return 0;
+    return str_dput(dent);
 }
 
 static int tmpfs_flush(struct shim_handle* hdl) {
@@ -196,7 +187,8 @@ static ssize_t tmpfs_read(struct shim_handle* hdl, void* buf, size_t count) {
         return -EISDIR;
     }
  
-    return str_read(hdl, buf, count);
+    ssize_t ret = str_read(hdl, buf, count);
+    return  ret == -EACCES? 0 : ret;
 }
 
 static ssize_t tmpfs_write(struct shim_handle* hdl, const void* buf, size_t count) {
@@ -232,8 +224,26 @@ static int query_dentry(struct shim_dentry* dent, mode_t* mode,
 
     lock(&data->lock);
 
+    if (dent){
+                    
+        switch (data->type) {
+            case FILE_REGULAR:
+                dent->type = S_IFREG;
+                break;
+            case FILE_DIR:
+                dent->type = S_IFDIR;
+                break;
+            default:
+                unlock(&data->lock);
+                return -ENOENT;
+                break;
+        }
+    }
+
     if (mode)
         *mode = data->mode;
+
+
 
     if (stat) {
         memset(stat, 0, sizeof(struct stat));
@@ -286,8 +296,7 @@ static int tmpfs_lookup(struct shim_dentry* dent) {
         dent->state |= DENTRY_ISDIRECTORY;
         return 0;
     }
-    //return query_dentry(dent, NULL, NULL);
-    return -ENOENT;
+    return query_dentry(dent, NULL, NULL);
 }
 
 
@@ -313,7 +322,8 @@ static int tmpfs_creat(struct shim_handle* hdl, struct shim_dentry* dir, struct 
     if ((ret = tmpfs_open(hdl, dent, flags | O_CREAT | O_EXCL)) < 0)
         return ret;
 
-
+    data->mode =mode;
+#if 0 //move to open
     struct shim_str_handle* str = &hdl->info.str;
 
     data->type = FILE_REGULAR;
@@ -322,7 +332,7 @@ static int tmpfs_creat(struct shim_handle* hdl, struct shim_dentry* dir, struct 
     hdl->type     = TYPE_STR;
     hdl->flags    = flags;
     hdl->acc_mode = ACC_MODE(flags & O_ACCMODE);
-
+#endif
     /* Increment the parent's link count */
     struct shim_tmpfs_data* parent_data = (struct shim_tmpfs_data*)(dir)->data;
     if (parent_data) {
@@ -339,8 +349,21 @@ static int tmpfs_mkdir(struct shim_dentry* dir, struct shim_dentry* dent, mode_t
     struct shim_tmpfs_data* data;
     if ((ret = try_create_data(dent, &data)) < 0)
         return ret;
-
+#if 0
+    if (data->type == FILE_UNKNOWN)
+    {
+        if (flags & O_CREAT)
+        {
+            data->type = FILE_REGULAR;
+            //always keep handle for tmpfs until unlink
+            get_handle(hdl);
+        }
+#endif
     data->type = FILE_DIR;
+    data->mode = 0777;
+    //(R_OK | W_OK | X_OK) << 6 | (R_OK | W_OK | X_OK) << 3 | (R_OK | W_OK | X_OK);
+
+    dent->type = S_IFDIR;
 
     /* Increment the parent's link count */
     struct shim_tmpfs_data* parent_data = (struct shim_tmpfs_data*)(dir)->data;
@@ -432,7 +455,7 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
     if (!tmpfs_data) {
         return -ENOENT;
     }
-    if (tmpfs_data->type != TYPE_DIR) {
+    if (tmpfs_data->type != FILE_DIR) {
         return -ENOTDIR;
     }
  
@@ -556,10 +579,30 @@ static int tmpfs_migrate(void* checkpoint, void** mount_data) {
 
 static int tmpfs_unlink(struct shim_dentry* dir, struct shim_dentry* dent) {
     int ret;
-    struct shim_tmpfs_data* data = dent->data;
+    struct shim_tmpfs_data* tmpfs_data = dent->data;
 
     dent->mode = NO_MODE;
-    str_dput(dent);
+    if (tmpfs_data) {
+        tmpfs_data->mode = 0;
+        if (tmpfs_data->type == FILE_REGULAR)
+        {
+            struct shim_str_data* data = &tmpfs_data->str_data;
+
+            REF_DEC(data->ref_count);
+            if (data->str) {
+                free(data->str);
+                data->str = NULL;
+            }
+
+            data->len      = 0;
+            data->buf_size = 0;
+        }
+
+        free(dent->data);
+        dent->data = NULL;
+    }
+    return 0;
+
 
     /* Drop the parent's link count */
     struct shim_tmpfs_data* parent_data = dir->data;
@@ -612,7 +655,16 @@ out:
 
 static int tmpfs_rename(struct shim_dentry* old, struct shim_dentry* new) {
     int ret;
+    
 
+    struct shim_tmpfs_data* tmpfs_data = new->data;
+    assert(tmpfs_data  && tmpfs_data->str_data.str == NULL);
+
+    new->data = old->data;
+    __destroy_data(tmpfs_data);
+    old->data = NULL;
+
+#if 0
     struct shim_tmpfs_data* old_data;
     if ((ret = try_create_data(old, &old_data)) < 0) {
         return ret;
@@ -622,6 +674,7 @@ static int tmpfs_rename(struct shim_dentry* old, struct shim_dentry* new) {
     if ((ret = try_create_data(new, &new_data)) < 0) {
         return ret;
     }
+#endif
     new->mode = old->mode;
     old->mode = NO_MODE;
 
