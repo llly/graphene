@@ -149,6 +149,11 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
     hdl->flags    = flags;
     hdl->acc_mode = ACC_MODE(flags & O_ACCMODE);
     hdl->info.str.data = &data->str_data;
+    if (flags & O_APPEND)
+        hdl->info.str.ptr = data->str_data.str + data->str_data.len;
+    else
+        hdl->info.str.ptr = data->str_data.str;
+    
     
     data->atime = time / 1000000;
 
@@ -211,7 +216,50 @@ static ssize_t tmpfs_write(struct shim_handle* hdl, const void* buf, size_t coun
     if (tmpfs_data->type != FILE_REGULAR) {
         return -EISDIR;
     }
- 
+
+    struct shim_str_handle* strhdl = &hdl->info.str;
+
+    assert(strhdl->data);
+
+    struct shim_str_data* data = strhdl->data;
+
+    if (!data->str || strhdl->ptr + count > data->str + data->buf_size) {
+        int newlen = 0;
+
+        if (data->str) {
+            newlen = data->buf_size * 2;
+
+            while (strhdl->ptr + count > data->str + newlen) {
+                newlen *= 2;
+            }
+        } else {
+            /* This line is diffrent from strfs*/
+            newlen = strhdl->ptr + count - data->str;
+        }
+
+        char* newbuf = malloc(newlen);
+        if (!newbuf)
+            return -ENOMEM;
+
+        /* This line is diffrent from strfs*/
+        memset(newbuf, 0, newlen);
+        if (data->str) {
+            memcpy(newbuf, data->str, data->len);
+            free(data->str);
+        }
+
+        strhdl->ptr    = newbuf + (strhdl->ptr - data->str);
+        data->str      = newbuf;
+        data->buf_size = newlen;
+    }
+
+    memcpy(strhdl->ptr, buf, count);
+
+    strhdl->ptr += count;
+    data->dirty = true;
+    if (strhdl->ptr >= data->str + data->len)
+        data->len = strhdl->ptr - data->str;
+
     uint64_t time = DkSystemTimeQuery();
     if (time == (uint64_t)-1)
         time = 0;
@@ -220,13 +268,14 @@ static ssize_t tmpfs_write(struct shim_handle* hdl, const void* buf, size_t coun
     tmpfs_data->mtime = tmpfs_data->atime;
     tmpfs_data->ctime = tmpfs_data->atime;
 
-    return str_write(hdl, buf, count);
+    return count;
 }
 
 
 static int tmpfs_mmap(struct shim_handle* hdl, void** addr, size_t size, int prot, int flags,
                        off_t offset) {
     int ret;
+    void* mem         = *addr;
 
 #if MAP_FILE == 0
     if (flags & MAP_ANONYMOUS)
@@ -234,23 +283,49 @@ static int tmpfs_mmap(struct shim_handle* hdl, void** addr, size_t size, int pro
     if (!(flags & MAP_FILE))
 #endif
         return -EINVAL;
-    
-    
+
     assert(hdl->dentry);
     struct shim_tmpfs_data* data;
     if ((ret = try_create_data(hdl->dentry, &data)) < 0)
         return ret;
     if (data->str_data.len < size + offset )
     {
-        return -EINVAL;
+        debug("mmap beyond tmpfs file end\n");
+        //return -EINVAL;
     }
-        
-    *addr = data->str_data.str[offset];
-    return 0;
-        
+    
+    //TODO mmap EPC addr  `data->str_data.str + offset` to EPC addr `*addr`
+    //*addr = data->str_data.str + offset;
+    //return 0;
+    return ENOSYS;
+
 }
 static off_t tmpfs_seek(struct shim_handle* hdl, off_t offset, int whence) {
-    return str_seek(hdl, offset, whence);
+    struct shim_str_handle* strhdl = &hdl->info.str;
+
+    assert(hdl->dentry);
+    assert(strhdl->data);
+
+    struct shim_str_data* data = strhdl->data;
+
+    switch (whence) {
+        case SEEK_SET:
+            if (offset < 0)
+                return -EINVAL;
+            strhdl->ptr = data->str + offset;
+            break;
+
+        case SEEK_CUR:
+                strhdl->ptr += offset;
+            break;
+
+        case SEEK_END:
+            strhdl->ptr = data->str + data->len - offset;
+            if (strhdl->ptr < data->str)
+                strhdl->ptr = data->str;
+            break;
+    }
+    return strhdl->ptr - data->str;
 }
 
 
@@ -283,8 +358,6 @@ static int query_dentry(struct shim_dentry* dent, mode_t* mode,
 
     if (mode)
         *mode = data->mode;
-
-
 
     if (stat) {
         memset(stat, 0, sizeof(struct stat));
