@@ -544,9 +544,7 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
     size_t dirent_buf_size = 0;
     char* buf = NULL;
     char* dirent_buf = NULL;
-    int nchildren = dent->nchildren;
 
-    
     struct shim_tmpfs_data* tmpfs_data = dent->data;
     if (!tmpfs_data) {
         return -ENOENT;
@@ -555,6 +553,50 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
         return -ENOTDIR;
     }
  
+
+    struct shim_dentry *tmp_dent = NULL;
+    struct shim_tmpfs_data* tmp_data  = NULL;
+    int nchildren = 0;
+    LISTP_FOR_EACH_ENTRY(tmp_dent, &dent->children, siblings) {
+        
+        size_t dirent_cur_off = dirent_buf_size;
+
+        // Check for memory corruption
+        assert((tmp_dent->state & DENTRY_INVALID_FLAGS) == 0);
+
+        if (tmp_dent->state & DENTRY_NEGATIVE)
+            continue;
+        tmp_data = tmp_dent->data;
+        if (!tmp_data || (tmp_data->type != FILE_DIR && tmp_data->type != FILE_REGULAR))
+            continue;
+        dirent_buf_size += SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
+         /* TODO: If realloc gets enabled delete following and uncomment rest */
+        char* tmp = malloc(dirent_buf_size);
+        if (!tmp) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        memcpy(tmp, dirent_buf, dirent_cur_off);
+        free(dirent_buf);
+        dirent_buf = tmp;
+        /*
+        dirent_buf = realloc(dirent_buf, dirent_buf_size);
+        if (!dirent_buf) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        */
+
+        memcpy(tmp, dirent_buf, dirent_cur_off);
+    
+        struct shim_dirent* dptr = (struct shim_dirent*)(dirent_buf + dirent_cur_off);
+        dptr->ino  = tmp_dent->ino;
+        dptr->type = tmp_data->type == FILE_DIR? LINUX_DT_DIR : LINUX_DT_REG;
+        memcpy(dptr->name, tmp_dent->name.name, tmp_dent->name.len + 1);
+
+        dirent_cur_off += SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
+
+    }
 #if 0
     while (1) {
         /* DkStreamRead for directory will return as many entries as fits into the buffer. */
@@ -629,6 +671,7 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
         }
     }
 
+#endif
     *dirent = (struct shim_dirent*)dirent_buf;
 
     /*
@@ -656,8 +699,6 @@ out:
         free(dirent_buf);
     }
     free(buf);
-    DkObjectClose(pal_hdl);
-#endif
     return ret;
 }
 
@@ -677,7 +718,6 @@ static int tmpfs_unlink(struct shim_dentry* dir, struct shim_dentry* dent) {
     int ret;
     struct shim_tmpfs_data* tmpfs_data = dent->data;
 
-    dent->mode = NO_MODE;
     if (tmpfs_data) {
         tmpfs_data->mode = 0;
         if (tmpfs_data->type == FILE_REGULAR)
@@ -696,27 +736,25 @@ static int tmpfs_unlink(struct shim_dentry* dir, struct shim_dentry* dent) {
         else if (tmpfs_data->type == FILE_DIR && 
             dent->nchildren != 0)
         {
-            return -ENOTEMPTY;
-        }
-        
+            
+            struct shim_dentry *tmp = NULL;
+            int nchildren = 0;
+            LISTP_FOR_EACH_ENTRY(tmp, &dent->children, siblings) {
+                // Check for memory corruption
+                assert((tmp->state & DENTRY_INVALID_FLAGS) == 0);
 
+                if (tmp->state & DENTRY_NEGATIVE)
+                    continue;
+                nchildren++;
+            }
+            if (nchildren != 0)
+                return -ENOTEMPTY;
+
+        }
         free(dent->data);
         dent->data = NULL;
+        dent->mode = NO_MODE;
     }
-
-    /*TODO remove dentry from parent dir dentry
-void remove_dentry(struct shim_dentry* dir, struct shim_dentry* dent) {
-    if (parent) {
-        // Increment both dentries' ref counts once they are linked
-        put_dentry(parent);
-        put_dentry(dent);
-        LISTP_REMOVE(dent, &parent->children, siblings);
-        dent->parent = NULL;
-        parent->nchildren--;
-
-    }
-}
-*/
 
     /* Drop the parent's link count */
     struct shim_tmpfs_data* parent_data = dir->data;
