@@ -115,6 +115,19 @@ static inline int try_create_data(struct shim_dentry* dent,
     return 0;
 }
 
+static void tmpfs_update_ino(struct shim_dentry* dent) {
+    if (dent->state & DENTRY_INO_UPDATED)
+        return;
+
+    unsigned long ino = 1;
+    if (!qstrempty(&dent->rel_path))
+        ino = hash_path(qstrgetstr(&dent->rel_path), dent->rel_path.len);
+
+    dent->ino = ino;
+    dent->state |= DENTRY_INO_UPDATED;
+}
+
+
 static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int flags) {
     int ret = 0;
     struct shim_tmpfs_data* data;
@@ -132,7 +145,7 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
         {
             data->type = FILE_REGULAR;
             dent->type = S_IFREG;
-            
+            tmpfs_update_ino(dent);
             //always keep handle for tmpfs until unlink
             get_handle(hdl);
         }
@@ -474,6 +487,8 @@ static int tmpfs_mkdir(struct shim_dentry* dir, struct shim_dentry* dent, mode_t
     //always keep handle for tmpfs until unlink
     //get_handle(hdl);
 
+    tmpfs_update_ino(dent);
+
     /* Increment the parent's link count */
     struct shim_tmpfs_data* parent_data = (struct shim_tmpfs_data*)(dir)->data;
     if (parent_data) {
@@ -552,16 +567,12 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
     if (tmpfs_data->type != FILE_DIR) {
         return -ENOTDIR;
     }
- 
 
     struct shim_dentry *tmp_dent = NULL;
     struct shim_tmpfs_data* tmp_data  = NULL;
     int nchildren = 0;
+    
     LISTP_FOR_EACH_ENTRY(tmp_dent, &dent->children, siblings) {
-        
-        size_t dirent_cur_off = dirent_buf_size;
-
-        // Check for memory corruption
         assert((tmp_dent->state & DENTRY_INVALID_FLAGS) == 0);
 
         if (tmp_dent->state & DENTRY_NEGATIVE)
@@ -570,33 +581,38 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
         if (!tmp_data || (tmp_data->type != FILE_DIR && tmp_data->type != FILE_REGULAR))
             continue;
         dirent_buf_size += SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
-         /* TODO: If realloc gets enabled delete following and uncomment rest */
-        char* tmp = malloc(dirent_buf_size);
-        if (!tmp) {
-            ret = -ENOMEM;
-            goto out;
-        }
-        memcpy(tmp, dirent_buf, dirent_cur_off);
-        free(dirent_buf);
-        dirent_buf = tmp;
-        /*
-        dirent_buf = realloc(dirent_buf, dirent_buf_size);
-        if (!dirent_buf) {
-            ret = -ENOMEM;
-            goto out;
-        }
-        */
-
-        memcpy(tmp, dirent_buf, dirent_cur_off);
+    }
     
+    dirent_buf = malloc(dirent_buf_size);
+    if (!dirent_buf) {
+        ret = -ENOMEM;
+        goto out;
+    }
+
+    size_t dirent_cur_off = 0;
+    struct shim_dirent** last = NULL;
+    LISTP_FOR_EACH_ENTRY(tmp_dent, &dent->children, siblings) {
+        if (tmp_dent->state & DENTRY_NEGATIVE)
+            continue;
+        tmp_data = tmp_dent->data;
+        if (!tmp_data || (tmp_data->type != FILE_DIR && tmp_data->type != FILE_REGULAR))
+            continue;
+
         struct shim_dirent* dptr = (struct shim_dirent*)(dirent_buf + dirent_cur_off);
         dptr->ino  = tmp_dent->ino;
         dptr->type = tmp_data->type == FILE_DIR? LINUX_DT_DIR : LINUX_DT_REG;
-        memcpy(dptr->name, tmp_dent->name.name, tmp_dent->name.len + 1);
-
-        dirent_cur_off += SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
-
+        memcpy(dptr->name, qstrgetstr(&tmp_dent->name), tmp_dent->name.len + 1);
+        
+        size_t len = SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
+        dptr->next = (struct shim_dirent*)(dirent_buf + dirent_cur_off + len);
+        last = &dptr->next;
+        dirent_cur_off += len;
     }
+    if (last) {
+        *last = NULL;
+    }
+
+    *dirent = (struct shim_dirent*)dirent_buf;
 #if 0
     while (1) {
         /* DkStreamRead for directory will return as many entries as fits into the buffer. */
@@ -671,8 +687,6 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
         }
     }
 
-#endif
-    *dirent = (struct shim_dirent*)dirent_buf;
 
     /*
      * Fix next field of struct shim_dirent to point to the next entry.
@@ -693,6 +707,7 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
         *last = NULL;
     }
 
+#endif
 out:
     /* Need to free output buffer if error is returned */
     if (ret) {
