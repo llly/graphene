@@ -7,31 +7,23 @@
  * This file contains code for implementation of 'tmpfs' filesystem.
  */
 
-#include <asm/fcntl.h>
 #include <asm/mman.h>
 #include <asm/unistd.h>
 #include <errno.h>
-#include <linux/fcntl.h>
 
-#include "pal.h"
-#include "pal_error.h"
 #include "shim_flags_conv.h"
 #include "shim_fs.h"
 #include "shim_handle.h"
 #include "shim_internal.h"
 #include "shim_lock.h"
-#include "shim_thread.h"
 #include "shim_utils.h"
-#include "shim_vma.h"
 #include "stat.h"
 
 struct shim_tmpfs_data {
     struct shim_str_data str_data;
     struct shim_lock lock;
-    struct atomic_int version;
     enum shim_file_type type;
     mode_t mode;
-    struct atomic_int size;
     unsigned long atime;
     unsigned long mtime;
     unsigned long ctime;
@@ -39,10 +31,13 @@ struct shim_tmpfs_data {
 };
 
 static int tmpfs_mount(const char* uri, void** mount_data) {
+    __UNUSED(uri);
+    __UNUSED(mount_data);
     return 0;
 }
 
 static int tmpfs_unmount(void* mount_data) {
+    __UNUSED(mount_data);
     return 0;
 }
 
@@ -83,7 +78,7 @@ static int create_data(struct shim_dentry* dent) {
 
     data->type = FILE_UNKNOWN;
     data->mode = 0;
-    //struct atomic_int size;
+    // struct atomic_int size;
 
     uint64_t time = DkSystemTimeQuery();
     if (time == (uint64_t)-1)
@@ -91,20 +86,19 @@ static int create_data(struct shim_dentry* dent) {
     data->atime = time / 1000000;
     data->mtime = data->atime;
     data->ctime = data->atime;
-    data ->nlink = 1;
-    
+    data->nlink = 1;
+
     dent->data = data;
     return 0;
 }
 
-static inline int try_create_data(struct shim_dentry* dent,
-                                  struct shim_tmpfs_data** dataptr) {
+static inline int try_create_data(struct shim_dentry* dent, struct shim_tmpfs_data** dataptr) {
     struct shim_tmpfs_data* data = (struct shim_tmpfs_data*)(dent)->data;
 
     if (!data) {
         lock(&dent->lock);
         int ret = create_data(dent);
-        data = (struct shim_tmpfs_data*)(dent)->data;
+        data    = (struct shim_tmpfs_data*)(dent)->data;
         unlock(&dent->lock);
         if (ret < 0) {
             return ret;
@@ -127,7 +121,6 @@ static void tmpfs_update_ino(struct shim_dentry* dent) {
     dent->state |= DENTRY_INO_UPDATED;
 }
 
-
 static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int flags) {
     int ret = 0;
     struct shim_tmpfs_data* data;
@@ -137,27 +130,23 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
     uint64_t time = DkSystemTimeQuery();
     if (time == (uint64_t)-1)
         time = 0;
-    
+
     lock(&data->lock);
-    if (data->type == FILE_UNKNOWN)
-    {
-        if (flags & O_CREAT)
-        {
+    if (data->type == FILE_UNKNOWN) {
+        if (flags & O_CREAT) {
             data->type = FILE_REGULAR;
             dent->type = S_IFREG;
             tmpfs_update_ino(dent);
-            //always keep data for tmpfs until unlink
+            // always keep data for tmpfs until unlink
             REF_INC(data->str_data.ref_count);
-        }
-        else
-        {
+        } else {
             return -ENOENT;
         }
     }
     ret = str_open(hdl, dent, flags);
 
-    hdl->type     = TYPE_STR;
-    hdl->acc_mode = ACC_MODE(flags & O_ACCMODE);
+    hdl->type          = TYPE_STR;
+    hdl->acc_mode      = ACC_MODE(flags & O_ACCMODE);
     hdl->info.str.data = &data->str_data;
     if (flags & O_APPEND)
         hdl->info.str.ptr = data->str_data.str + data->str_data.len;
@@ -172,15 +161,14 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
 
 static int tmpfs_dput(struct shim_dentry* dent) {
     struct shim_tmpfs_data* tmpfs_data = dent->data;
-    struct shim_str_data* data = dent->data;
 
     if (!tmpfs_data || REF_DEC(tmpfs_data->str_data.ref_count) > 1)
         return 0;
     __destroy_data(tmpfs_data);
 
-    dent->data = NULL;
+    dent->data  = NULL;
     dent->state = DENTRY_NEGATIVE;
-    dent->mode = NO_MODE;
+    dent->mode  = NO_MODE;
     return 0;
 }
 
@@ -213,10 +201,10 @@ static ssize_t tmpfs_read(struct shim_handle* hdl, void* buf, size_t count) {
     if (tmpfs_data->type != FILE_REGULAR) {
         return -EISDIR;
     }
- 
+
     ssize_t ret = str_read(hdl, buf, count);
     /* don't udpate access time */
-    return  ret == -EACCES? 0 : ret;
+    return ret == -EACCES ? 0 : ret;
 }
 
 static ssize_t tmpfs_write(struct shim_handle* hdl, const void* buf, size_t count) {
@@ -277,18 +265,17 @@ static ssize_t tmpfs_write(struct shim_handle* hdl, const void* buf, size_t coun
     uint64_t time = DkSystemTimeQuery();
     if (time == (uint64_t)-1)
         time = 0;
-    
+
     tmpfs_data->ctime = time / 1000000;
     tmpfs_data->mtime = tmpfs_data->ctime;
 
     return count;
 }
 
-
 static int tmpfs_mmap(struct shim_handle* hdl, void** addr, size_t size, int prot, int flags,
-                       off_t offset) {
+                      off_t offset) {
     int ret;
-    void* mem         = *addr;
+    void* mem = *addr;
 
 #if MAP_FILE == 0
     if (flags & MAP_ANONYMOUS)
@@ -301,17 +288,15 @@ static int tmpfs_mmap(struct shim_handle* hdl, void** addr, size_t size, int pro
     struct shim_tmpfs_data* data;
     if ((ret = try_create_data(hdl->dentry, &data)) < 0)
         return ret;
-    if (data->str_data.len < size + offset )
-    {
+    if (data->str_data.len < size + offset) {
         debug("mmap beyond tmpfs file end\n");
-        //return -EINVAL;
+        // return -EINVAL;
     }
-    
-    //TODO mmap EPC addr  `data->str_data.str + offset` to EPC addr `*addr`
-    //*addr = data->str_data.str + offset;
-    //return 0;
-    return ENOSYS;
 
+    // TODO mmap EPC addr  `data->str_data.str + offset` to EPC addr `*addr`
+    //*addr = data->str_data.str + offset;
+    // return 0;
+    return ENOSYS;
 }
 static off_t tmpfs_seek(struct shim_handle* hdl, off_t offset, int whence) {
     struct shim_str_handle* strhdl = &hdl->info.str;
@@ -329,7 +314,7 @@ static off_t tmpfs_seek(struct shim_handle* hdl, off_t offset, int whence) {
             break;
 
         case SEEK_CUR:
-                strhdl->ptr += offset;
+            strhdl->ptr += offset;
             break;
 
         case SEEK_END:
@@ -341,10 +326,7 @@ static off_t tmpfs_seek(struct shim_handle* hdl, off_t offset, int whence) {
     return strhdl->ptr - data->str;
 }
 
-
-
-static int query_dentry(struct shim_dentry* dent, mode_t* mode,
-                        struct stat* stat) {
+static int query_dentry(struct shim_dentry* dent, mode_t* mode, struct stat* stat) {
     int ret = 0;
 
     struct shim_tmpfs_data* data;
@@ -353,8 +335,7 @@ static int query_dentry(struct shim_dentry* dent, mode_t* mode,
 
     lock(&data->lock);
 
-    if (dent){
-                    
+    if (dent) {
         switch (data->type) {
             case FILE_REGULAR:
                 dent->type = S_IFREG;
@@ -419,7 +400,7 @@ static int tmpfs_stat(struct shim_dentry* dent, struct stat* statbuf) {
 static int tmpfs_lookup(struct shim_dentry* dent) {
     if (qstrempty(&dent->rel_path)) {
         /* root of pseudo-FS */
-        dent->ino    = 1;
+        dent->ino = 1;
         dent->state |= DENTRY_ISDIRECTORY;
         return 0;
     }
@@ -427,7 +408,7 @@ static int tmpfs_lookup(struct shim_dentry* dent) {
 }
 
 static int tmpfs_creat(struct shim_handle* hdl, struct shim_dentry* dir, struct shim_dentry* dent,
-                        int flags, mode_t mode) {
+                       int flags, mode_t mode) {
     int ret = 0;
     struct shim_tmpfs_data* data;
     if ((ret = try_create_data(dent, &data)) < 0)
@@ -442,7 +423,7 @@ static int tmpfs_creat(struct shim_handle* hdl, struct shim_dentry* dir, struct 
     if ((ret = tmpfs_open(hdl, dent, flags | O_CREAT | O_EXCL)) < 0)
         return ret;
 
-    data->mode =mode;
+    data->mode = mode;
 
     /* Increment the parent's link count */
     struct shim_tmpfs_data* parent_data = (struct shim_tmpfs_data*)(dir)->data;
@@ -463,8 +444,7 @@ static int tmpfs_mkdir(struct shim_dentry* dir, struct shim_dentry* dent, mode_t
     if (data->type != FILE_UNKNOWN)
         return -EEXIST;
     data->type = FILE_DIR;
-    data->mode = 0777;
-    //(R_OK | W_OK | X_OK) << 6 | (R_OK | W_OK | X_OK) << 3 | (R_OK | W_OK | X_OK);
+    data->mode = mode;
 
     dent->type = S_IFDIR;
 
@@ -480,31 +460,7 @@ static int tmpfs_mkdir(struct shim_dentry* dir, struct shim_dentry* dent, mode_t
     return ret;
 }
 
-#define NEED_RECREATE(hdl) (!FILE_HANDLE_DATA(hdl))
-
-static int tmpfs_recreate(struct shim_handle* hdl) {
-    struct shim_tmpfs_data* data = FILE_HANDLE_DATA(hdl);
-    int ret = 0;
-
-    /* quickly bail out if the data is created */
-    if (data)
-        return 0;
-
-    if (hdl->dentry) {
-        if ((ret = try_create_data(hdl->dentry, &data)) < 0)
-            return ret;
-    } else {
-        data = __create_data();
-        if (!data)
-            return -ENOMEM;
-    }
-}
-
 static int tmpfs_hstat(struct shim_handle* hdl, struct stat* stat) {
-    int ret;
-    if (NEED_RECREATE(hdl) && (ret = tmpfs_recreate(hdl)) < 0)
-        return ret;
-
     assert(hdl->dentry);
     if (qstrempty(&hdl->dentry->rel_path)) {
         /* root of pseudo-FS */
@@ -512,7 +468,6 @@ static int tmpfs_hstat(struct shim_handle* hdl, struct stat* stat) {
     }
     return query_dentry(hdl->dentry, NULL, stat);
 }
-
 
 static int tmpfs_truncate(struct shim_handle* hdl, off_t len) {
     int ret = 0;
@@ -524,14 +479,14 @@ static int tmpfs_truncate(struct shim_handle* hdl, off_t len) {
 
     assert(hdl->dentry);
     assert(strhdl->data);
-    
+
     struct shim_str_data* data = strhdl->data;
     if (!data->str && len == 0)
         return 0;
 
     lock(&hdl->lock);
 
-    if (!data->str || len > data->buf_size) {
+    if (!data->str || len > (off_t)data->buf_size) {
         int newlen = 0;
 
         if (data->str && data->buf_size) {
@@ -567,12 +522,9 @@ out:
 }
 
 static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) {
-    struct shim_tmpfs_data* data = NULL;
-    int ret = 0;
-    PAL_HANDLE pal_hdl = NULL;
-    size_t buf_size = MAX_PATH;
+    int ret                = 0;
     size_t dirent_buf_size = 0;
-    char* dirent_buf = NULL;
+    char* dirent_buf       = NULL;
 
     struct shim_tmpfs_data* tmpfs_data = dent->data;
     if (!tmpfs_data) {
@@ -582,10 +534,8 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
         return -ENOTDIR;
     }
 
-    struct shim_dentry *tmp_dent = NULL;
-    struct shim_tmpfs_data* tmp_data  = NULL;
-    int nchildren = 0;
-    
+    struct shim_dentry* tmp_dent     = NULL;
+    struct shim_tmpfs_data* tmp_data = NULL;
     LISTP_FOR_EACH_ENTRY(tmp_dent, &dent->children, siblings) {
         assert((tmp_dent->state & DENTRY_INVALID_FLAGS) == 0);
 
@@ -596,14 +546,14 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
             continue;
         dirent_buf_size += SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
     }
-    
+
     dirent_buf = malloc(dirent_buf_size);
     if (!dirent_buf) {
         ret = -ENOMEM;
         goto out;
     }
 
-    size_t dirent_cur_off = 0;
+    size_t dirent_cur_off     = 0;
     struct shim_dirent** last = NULL;
     LISTP_FOR_EACH_ENTRY(tmp_dent, &dent->children, siblings) {
         if (tmp_dent->state & DENTRY_NEGATIVE)
@@ -613,12 +563,12 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
             continue;
 
         struct shim_dirent* dptr = (struct shim_dirent*)(dirent_buf + dirent_cur_off);
-        dptr->ino  = tmp_dent->ino;
-        dptr->type = tmp_data->type == FILE_DIR? LINUX_DT_DIR : LINUX_DT_REG;
+        dptr->ino                = tmp_dent->ino;
+        dptr->type               = tmp_data->type == FILE_DIR ? LINUX_DT_DIR : LINUX_DT_REG;
         memcpy(dptr->name, qstrgetstr(&tmp_dent->name), tmp_dent->name.len + 1);
         size_t len = SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
         dptr->next = (struct shim_dirent*)(dirent_buf + dirent_cur_off + len);
-        last = &dptr->next;
+        last       = &dptr->next;
         dirent_cur_off += len;
     }
     if (last) {
@@ -634,36 +584,18 @@ out:
     return ret;
 }
 
-static int tmpfs_checkout(struct shim_handle* hdl) {
-    return 0;
-}
-
-static ssize_t tmpfs_checkpoint(void** checkpoint, void* mount_data) {
-    return 0;
-}
-
-static int tmpfs_migrate(void* checkpoint, void** mount_data) {
-    return 0;
-}
-
 static int tmpfs_unlink(struct shim_dentry* dir, struct shim_dentry* dent) {
-    int ret;
     struct shim_tmpfs_data* tmpfs_data = dent->data;
-    if(!tmpfs_data)
+    if (!tmpfs_data)
         return -ENOENT;
 
-    struct shim_str_data* data = &tmpfs_data->str_data;
-    if (tmpfs_data->type == FILE_REGULAR)
-    {
-        //always keep data for tmpfs until unlink
-        //REF_DEC(data->ref_count);
+    if (tmpfs_data->type == FILE_REGULAR) {
+        // always keep data for tmpfs until unlink
+        // REF_DEC(data->ref_count);
         tmpfs_dput(dent);
-    }
-    else if (tmpfs_data->type == FILE_DIR &&
-        dent->nchildren != 0)
-    {
-        struct shim_dentry *tmp = NULL;
-        int nchildren = 0;
+    } else if (tmpfs_data->type == FILE_DIR && dent->nchildren != 0) {
+        struct shim_dentry* tmp = NULL;
+        int nchildren           = 0;
         LISTP_FOR_EACH_ENTRY(tmp, &dent->children, siblings) {
             // Check for memory corruption
             assert((tmp->state & DENTRY_INVALID_FLAGS) == 0);
@@ -689,22 +621,18 @@ static int tmpfs_unlink(struct shim_dentry* dir, struct shim_dentry* dent) {
 }
 
 static off_t tmpfs_poll(struct shim_handle* hdl, int poll_type) {
-    int ret;
     struct shim_str_data* data = hdl->info.str.data;
-    off_t size = data->len;
+    off_t size                 = data ? data->len : 0;
 
     if (poll_type == FS_POLL_SZ)
         return size;
 
-    return (poll_type & FS_POLL_WR) | (poll_type & FS_POLL_RD);
+    return -EAGAIN;
 }
 
 static int tmpfs_rename(struct shim_dentry* old, struct shim_dentry* new) {
-    int ret;
-    
-
     struct shim_tmpfs_data* tmpfs_data = new->data;
-    assert(tmpfs_data  && tmpfs_data->str_data.str == NULL);
+    assert(tmpfs_data && tmpfs_data->str_data.str == NULL);
 
     new->data = old->data;
     __destroy_data(tmpfs_data);
@@ -718,17 +646,18 @@ static int tmpfs_rename(struct shim_dentry* old, struct shim_dentry* new) {
     uint64_t time = DkSystemTimeQuery();
     if (time == (uint64_t)-1)
         time = 0;
-    
-    tmpfs_data = new->data;
+
+    tmpfs_data        = new->data;
     tmpfs_data->ctime = time / 1000000;
 
     return 0;
 }
 
 static int tmpfs_chmod(struct shim_dentry* dent, mode_t mode) {
-    int ret;
     struct shim_tmpfs_data* tmpfs_data = dent->data;
-    dent->mode = mode;
+    if (!tmpfs_data)
+        return -ENOENT;
+    dent->mode       = mode;
     tmpfs_data->mode = mode;
 
     uint64_t time = DkSystemTimeQuery();
@@ -738,20 +667,17 @@ static int tmpfs_chmod(struct shim_dentry* dent, mode_t mode) {
     return 0;
 }
 struct shim_fs_ops tmp_fs_ops = {
-    .mount      = &tmpfs_mount,
-    .unmount    = &tmpfs_unmount,
-    .flush      = &tmpfs_flush,
-    .close      = &tmpfs_close,
-    .read       = &tmpfs_read,
-    .write      = &tmpfs_write,
-    .mmap       = tmpfs_mmap,
-    .seek       = &tmpfs_seek,
-    .hstat      = &tmpfs_hstat,
-    .truncate   = &tmpfs_truncate,
-    .checkout   = &tmpfs_checkout,
-    .checkpoint = &tmpfs_checkpoint,
-    .migrate    = &tmpfs_migrate,
-    .poll       = &tmpfs_poll,
+    .mount    = &tmpfs_mount,
+    .unmount  = &tmpfs_unmount,
+    .flush    = &tmpfs_flush,
+    .close    = &tmpfs_close,
+    .read     = &tmpfs_read,
+    .write    = &tmpfs_write,
+    .mmap     = tmpfs_mmap,
+    .seek     = &tmpfs_seek,
+    .hstat    = &tmpfs_hstat,
+    .truncate = &tmpfs_truncate,
+    .poll     = &tmpfs_poll,
 };
 
 struct shim_d_ops tmp_d_ops = {
