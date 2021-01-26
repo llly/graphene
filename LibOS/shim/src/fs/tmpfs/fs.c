@@ -64,6 +64,8 @@ static struct shim_tmpfs_data* __create_data(void) {
 
 static void __destroy_data(struct shim_tmpfs_data* data) {
     destroy_lock(&data->lock);
+    if (data->str_data.str)
+        free(data->str_data.str);
     free(data);
 }
 
@@ -169,7 +171,17 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
 }
 
 static int tmpfs_dput(struct shim_dentry* dent) {
-    return str_dput(dent);
+    struct shim_tmpfs_data* tmpfs_data = dent->data;
+    struct shim_str_data* data = dent->data;
+
+    if (!tmpfs_data || REF_DEC(tmpfs_data->str_data.ref_count) > 1)
+        return 0;
+    __destroy_data(tmpfs_data);
+
+    dent->data = NULL;
+    dent->state = DENTRY_NEGATIVE;
+    dent->mode = NO_MODE;
+    return 0;
 }
 
 static int tmpfs_flush(struct shim_handle* hdl) {
@@ -604,7 +616,6 @@ static int tmpfs_readdir(struct shim_dentry* dent, struct shim_dirent** dirent) 
         dptr->ino  = tmp_dent->ino;
         dptr->type = tmp_data->type == FILE_DIR? LINUX_DT_DIR : LINUX_DT_REG;
         memcpy(dptr->name, qstrgetstr(&tmp_dent->name), tmp_dent->name.len + 1);
-        
         size_t len = SHIM_DIRENT_ALIGNED_SIZE(tmp_dent->name.len + 1);
         dptr->next = (struct shim_dirent*)(dirent_buf + dirent_cur_off + len);
         last = &dptr->next;
@@ -638,48 +649,34 @@ static int tmpfs_migrate(void* checkpoint, void** mount_data) {
 static int tmpfs_unlink(struct shim_dentry* dir, struct shim_dentry* dent) {
     int ret;
     struct shim_tmpfs_data* tmpfs_data = dent->data;
+    if(!tmpfs_data)
+        return -ENOENT;
 
-    if (tmpfs_data) {
-        struct shim_str_data* data = &tmpfs_data->str_data;
-        if (tmpfs_data->type == FILE_REGULAR)
-        {
+    struct shim_str_data* data = &tmpfs_data->str_data;
+    if (tmpfs_data->type == FILE_REGULAR)
+    {
+        //always keep data for tmpfs until unlink
+        //REF_DEC(data->ref_count);
+        tmpfs_dput(dent);
+    }
+    else if (tmpfs_data->type == FILE_DIR &&
+        dent->nchildren != 0)
+    {
+        struct shim_dentry *tmp = NULL;
+        int nchildren = 0;
+        LISTP_FOR_EACH_ENTRY(tmp, &dent->children, siblings) {
+            // Check for memory corruption
+            assert((tmp->state & DENTRY_INVALID_FLAGS) == 0);
 
-            //always keep data for tmpfs until unlink
-            REF_DEC(data->ref_count);
-            if (data->str) {
-                free(data->str);
-                data->str = NULL;
-            }
-
-            tmpfs_data->mode = 0;
-            data->len      = 0;
-            data->buf_size = 0;
+            if (tmp->state & DENTRY_NEGATIVE)
+                continue;
+            nchildren++;
         }
-        else if (tmpfs_data->type == FILE_DIR && 
-            dent->nchildren != 0)
-        {
-            
-            struct shim_dentry *tmp = NULL;
-            int nchildren = 0;
-            LISTP_FOR_EACH_ENTRY(tmp, &dent->children, siblings) {
-                // Check for memory corruption
-                assert((tmp->state & DENTRY_INVALID_FLAGS) == 0);
-
-                if (tmp->state & DENTRY_NEGATIVE)
-                    continue;
-                nchildren++;
-            }
-            if (nchildren != 0)
-                return -ENOTEMPTY;
-
-            tmpfs_data->mode = 0;
-
-        }
-        free(dent->data);
+        if (nchildren != 0)
+            return -ENOTEMPTY;
         dent->data = NULL;
         dent->mode = NO_MODE;
     }
-
     /* Drop the parent's link count */
     struct shim_tmpfs_data* parent_data = dir->data;
     if (parent_data) {
