@@ -64,8 +64,7 @@ static void __destroy_data(struct shim_tmpfs_data* data) {
     free(data);
 }
 
-/* create a data in the dentry and compose it's uri. dent->lock needs to
-   be held */
+/* create a data in the dentry. dent->lock needs to be held */
 static int create_data(struct shim_dentry* dent) {
     assert(locked(&dent->lock));
 
@@ -78,7 +77,6 @@ static int create_data(struct shim_dentry* dent) {
 
     data->type = FILE_UNKNOWN;
     data->mode = 0;
-    // struct atomic_int size;
 
     uint64_t time = DkSystemTimeQuery();
     if (time == (uint64_t)-1)
@@ -127,33 +125,52 @@ static int tmpfs_open(struct shim_handle* hdl, struct shim_dentry* dent, int fla
     if ((ret = try_create_data(dent, &data)) < 0)
         return ret;
 
-    uint64_t time = DkSystemTimeQuery();
-    if (time == (uint64_t)-1)
-        time = 0;
-
     lock(&data->lock);
-    if (data->type == FILE_UNKNOWN) {
-        if (flags & O_CREAT) {
-            data->type = FILE_REGULAR;
-            dent->type = S_IFREG;
-            tmpfs_update_ino(dent);
-            // always keep data for tmpfs until unlink
-            REF_INC(data->str_data.ref_count);
-        } else {
-            return -ENOENT;
-        }
+    if (dent->state & DENTRY_MOUNTPOINT) {
+        /* root of tmpfs */
+        data->type = FILE_DIR;
+        data->mode = 0777;
+        dent->type = S_IFDIR;
+        tmpfs_update_ino(dent);
     }
-    ret = str_open(hdl, dent, flags);
+    switch (data->type) {
+        case FILE_UNKNOWN:
+            if (flags & O_CREAT) {
+                data->type = FILE_REGULAR;
+                dent->type = S_IFREG;
+                tmpfs_update_ino(dent);
+                // always keep data for tmpfs until unlink
+                REF_INC(data->str_data.ref_count);
+            } else {
+                ret = -ENOENT;
+                goto out;
+            }
+            /*continue to FILE_REGULAR */
+        case FILE_REGULAR:
+            ret                = str_open(hdl, dent, flags);
+            hdl->type          = TYPE_STR;
+            hdl->info.str.data = &data->str_data;
+            if (flags & O_APPEND)
+                hdl->info.str.ptr = data->str_data.str + data->str_data.len;
+            else
+                hdl->info.str.ptr = data->str_data.str;
+            break;
+        case FILE_DIR:
+            if (flags & (O_ACCMODE | O_CREAT | O_TRUNC | O_APPEND)) {
+                ret = -EISDIR;
+                goto out;
+            }
+            ret       = str_open(hdl, dent, flags);
+            hdl->type = TYPE_DIR;
+            break;
+        default:
+            assert(true);
+            break;
+    }
 
-    hdl->type          = TYPE_STR;
-    hdl->acc_mode      = ACC_MODE(flags & O_ACCMODE);
-    hdl->info.str.data = &data->str_data;
-    if (flags & O_APPEND)
-        hdl->info.str.ptr = data->str_data.str + data->str_data.len;
-    else
-        hdl->info.str.ptr = data->str_data.str;
-    data->atime = time / 1000000;
+    hdl->acc_mode = ACC_MODE(flags & O_ACCMODE);
 
+out:
     unlock(&data->lock);
 
     return ret;
@@ -272,6 +289,7 @@ static ssize_t tmpfs_write(struct shim_handle* hdl, const void* buf, size_t coun
     return count;
 }
 
+/* TODO is mmap really needed? */
 static int tmpfs_mmap(struct shim_handle* hdl, void** addr, size_t size, int prot, int flags,
                       off_t offset) {
     int ret;
@@ -673,7 +691,7 @@ struct shim_fs_ops tmp_fs_ops = {
     .close    = &tmpfs_close,
     .read     = &tmpfs_read,
     .write    = &tmpfs_write,
-    .mmap     = tmpfs_mmap,
+    .mmap     = NULL,  //&tmpfs_mmap,
     .seek     = &tmpfs_seek,
     .hstat    = &tmpfs_hstat,
     .truncate = &tmpfs_truncate,
