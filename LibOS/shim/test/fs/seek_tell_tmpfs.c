@@ -98,55 +98,13 @@ static void seek_output_stdio(const char* path) {
     printf("fclose(%s) output OK\n", path);
 }
 
-
-void copy_data(int fi, int fo, const char* input_path, const char* output_path, size_t size) {
-    void* data = alloc_buffer(size);
-    read_fd(input_path, fi, data, size);
-    printf("read_fd(%zu) input OK\n", size);
-    write_fd(output_path, fo, data, size);
-    printf("write_fd(%zu) output OK\n", size);
-    free(data);
-}
-
-static void copy_file(const char* input_path, const char* output_path) {
-    int fi = open_input_fd(input_path);
-    size_t size;
-
-    struct stat st;
-    if (fstat(fi, &st) < 0)
-        fatal_error("Failed to stat file %s: %s\n", input_path, strerror(errno));
-    size = st.st_size;
-
-    int fo = open_output_fd(output_path, false);
-
-    if (fstat(fo, &st) < 0)
-        fatal_error("Failed to stat file %s: %s\n", output_path, strerror(errno));
-    if (st.st_size != 0)
-        fatal_error("Size mismatch: expected 0, got %zu\n", st.st_size);
-
-    copy_data(fi, fo, input_path, output_path, size);
-
-    if (fstat(fo, &st) < 0)
-        fatal_error("Failed to stat file %s: %s\n", output_path, strerror(errno));
-    if (st.st_size != size)
-        fatal_error("Size mismatch: expected %zu, got %zu\n", size, st.st_size);
-    printf("fstat(%zu) output 2 OK\n", size);
-
-    close_fd(input_path, fi);
-    printf("close(%zu) input OK\n", size);
-    close_fd(output_path, fo);
-    printf("close(%zu) output OK\n", size);
-}
-
-
-
 int main(int argc, char* argv[]) {
     if (argc < 4)
         fatal_error("Usage: %s <input_path> <output_path_1> <output_path_2>\n", argv[0]);
 
     setup();
-    copy_file(argv[1], argv[2]);
-    copy_file(argv[1], argv[3]);
+    copy_file_tmpfs(argv[1], argv[2]);
+    copy_file_tmpfs(argv[1], argv[3]);
     seek_input_fd(argv[1]);
     seek_input_stdio(argv[1]);
     seek_output_fd(argv[2]);

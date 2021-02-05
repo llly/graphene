@@ -124,8 +124,6 @@ class TC_10_Tmpfs(RegressionTestCase):
         self.assertIn('ftell(' + output_path_2 + ') output end 2 OK: ' + str(size + 4098), stdout)
         self.assertIn('fclose(' + output_path_2 + ') output OK', stdout)
 
-        expected_size = size + 4098
-
     def test_115_seek_tell(self):
         input_path = self.INPUT_FILES[-1] # existing file
         output_path_1 = os.path.join(self.OUTPUT_DIR, 'test_115a') # writable files
@@ -133,6 +131,89 @@ class TC_10_Tmpfs(RegressionTestCase):
         stdout, stderr = self.run_binary(['seek_tell_tmpfs', input_path, output_path_1, output_path_2])
         self.verify_seek_tell(stdout, stderr, input_path, output_path_1, output_path_2,
                               self.FILE_SIZES[-1])        
+
+    def test_120_file_delete(self):
+        file_path = 'test_120'
+        file_in = self.INPUT_FILES[-1] # existing file to be copied
+        file_out_1 = os.path.join(self.OUTPUT_DIR, file_path + 'a')
+        file_out_2 = os.path.join(self.OUTPUT_DIR, file_path + 'b')
+        file_out_3 = os.path.join(self.OUTPUT_DIR, file_path + 'c')
+        file_out_4 = os.path.join(self.OUTPUT_DIR, file_path + 'd')
+        file_out_5 = os.path.join(self.OUTPUT_DIR, file_path + 'e')
+        stdout, stderr = self.run_binary(['delete_tmpfs', file_in, file_out_1, file_out_2, file_out_3, file_out_4,
+                                         file_out_5])
+        # verify
+        self.assertNotIn('ERROR: ', stderr)
+        self.assertFalse(os.path.isfile(file_out_1))
+        self.assertFalse(os.path.isfile(file_out_2))
+        self.assertFalse(os.path.isfile(file_out_3))
+        self.assertFalse(os.path.isfile(file_out_4))
+        self.assertFalse(os.path.isfile(file_out_5))
+        self.assertIn('unlink(' + file_out_1 + ') OK', stdout)
+        self.assertIn('open(' + file_out_2 + ') input 1 OK', stdout)
+        self.assertIn('close(' + file_out_2 + ') input 1 OK', stdout)
+        self.assertIn('unlink(' + file_out_2 + ') input 1 OK', stdout)
+        self.assertIn('open(' + file_out_3 + ') input 2 OK', stdout)
+        self.assertIn('unlink(' + file_out_3 + ') input 2 OK', stdout)
+        self.assertIn('close(' + file_out_3 + ') input 2 OK', stdout)
+        self.assertIn('open(' + file_out_4 + ') output 1 OK', stdout)
+        self.assertIn('close(' + file_out_4 + ') output 1 OK', stdout)
+        self.assertIn('unlink(' + file_out_4 + ') output 1 OK', stdout)
+        self.assertIn('open(' + file_out_5 + ') output 2 OK', stdout)
+        self.assertIn('unlink(' + file_out_5 + ') output 2 OK', stdout)
+        self.assertIn('close(' + file_out_5 + ') output 2 OK', stdout)
+
+    # pylint: disable=too-many-arguments
+    def verify_stat(self, stdout, stderr, input_path, output_path, size):
+        self.assertNotIn('ERROR: ', stderr)
+        self.assertIn('stat(' + input_path + ') input 1 OK', stdout)
+        self.assertIn('open(' + input_path + ') input 2 OK', stdout)
+        self.assertIn('stat(' + input_path + ') input 2 OK: ' + size, stdout)
+        self.assertIn('fstat(' + input_path + ') input 2 OK: ' + size, stdout)
+        self.assertIn('close(' + input_path + ') input 2 OK', stdout)
+
+        self.assertIn('stat(' + output_path + ') output 1 OK', stdout)
+        self.assertIn('open(' + output_path + ') output 2 OK', stdout)
+        self.assertIn('stat(' + output_path + ') output 2 OK: ' + size, stdout)
+        self.assertIn('fstat(' + output_path + ') output 2 OK: ' + size, stdout)
+        self.assertIn('close(' + output_path + ') output 2 OK', stdout)
+
+    def test_130_file_stat(self):
+        # running for every file separately so the process doesn't need to enumerate directory
+        # (different code path, enumeration also performs stat)
+        for i in self.INDEXES:
+            input_path = self.INPUT_FILES[i] # existing file
+            output_path = self.OUTPUT_FILES[i] # file that will be opened in write mode
+            size = str(self.FILE_SIZES[i])
+            stdout, stderr = self.run_binary(['stat_tmpfs', input_path, output_path])
+            self.verify_stat(stdout, stderr, input_path, output_path, size)
+
+    def do_truncate_test(self, size_in, size_out):
+        # prepare paths/files
+        i = self.FILE_SIZES.index(size_in)
+        input_path = self.INPUT_FILES[i] # source file to be truncated
+        out_1_path = self.OUTPUT_FILES[i] + 'a'
+        out_2_path = self.OUTPUT_FILES[i] + 'b'
+        # run test
+        stdout, stderr = self.run_binary(['truncate_tmpfs', input_path, out_1_path, out_2_path, str(size_out)])
+        self.assertNotIn('ERROR: ', stderr)
+        self.assertIn('truncate(' + out_1_path + ') to ' + str(size_out) + ' OK', stdout)
+        self.assertIn('open(' + out_2_path + ') output OK', stdout)
+        self.assertIn('ftruncate(' + out_2_path + ') to ' + str(size_out) + ' OK', stdout)
+        self.assertIn('close(' + out_2_path + ') output OK', stdout)
+
+    def test_140_file_truncate(self):
+        self.do_truncate_test(0, 1)
+        self.do_truncate_test(0, 16)
+        self.do_truncate_test(0, 65537)
+        self.do_truncate_test(1, 0)
+        self.do_truncate_test(1, 17)
+        self.do_truncate_test(16, 0)
+        self.do_truncate_test(16, 1048576)
+        self.do_truncate_test(255, 15)
+        self.do_truncate_test(255, 256)
+        self.do_truncate_test(65537, 65535)
+        self.do_truncate_test(65537, 65536)
 
     def do_copy_test(self, executable, timeout):
         stdout, stderr = self.run_binary([executable, self.INPUT_DIR, self.OUTPUT_DIR],

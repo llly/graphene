@@ -18,6 +18,9 @@ execs = \
 	read_write \
 	seek_tell \
 	seek_tell_tmpfs \
+	delete_tmpfs \
+	stat_tmpfs \
+	truncate_tmpfs \
 	stat \
 	truncate
 
