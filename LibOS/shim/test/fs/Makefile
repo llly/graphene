@@ -17,6 +17,7 @@ execs = \
 	open_flags \
 	read_write \
 	seek_tell \
+	seek_tell_tmpfs \
 	stat \
 	truncate
 
