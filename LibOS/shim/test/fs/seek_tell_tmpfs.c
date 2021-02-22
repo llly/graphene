@@ -1,4 +1,4 @@
-#include "common.h"
+#include "common_tmpfs.h"
 
 #define EXTEND_SIZE 4097
 

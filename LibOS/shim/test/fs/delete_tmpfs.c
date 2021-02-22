@@ -1,4 +1,4 @@
-#include "common.h"
+#include "common_tmpfs.h"
 
 static void file_delete(const char* file_path_1, const char* file_path_2, bool writable) {
     const char* type = writable ? "output" : "input";

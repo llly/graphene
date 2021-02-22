@@ -1,4 +1,4 @@
-#include "common.h"
+#include "common_tmpfs.h"
 
 static void file_truncate(const char* file_path_1, const char* file_path_2, size_t size) {
     if (truncate(file_path_1, size) != 0)

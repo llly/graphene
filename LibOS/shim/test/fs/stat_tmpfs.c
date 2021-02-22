@@ -1,4 +1,4 @@
-#include "common.h"
+#include "common_tmpfs.h"
 
 static void file_stat(const char* file_path, bool writable) {
     struct stat st;

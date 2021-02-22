@@ -1,4 +1,4 @@
-#include "common.h"
+#include "common_tmpfs.h"
 #include "stdio.h"
 
 int main(int argc, char* argv[]) {
