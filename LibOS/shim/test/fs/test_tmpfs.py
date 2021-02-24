@@ -97,4 +97,4 @@ class TC_10_Tmpfs(TC_00_FileSystem):
     # overrides TC_00_FileSystem to skip it
     @unittest.skip("not applicable for tmpfs")
     def test_210_copy_dir_mounted(self):
-        skip
+        print("not applicable for tmpfs")
