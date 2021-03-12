@@ -108,9 +108,8 @@ static int pipe_listen(PAL_HANDLE* handle, const char* name, int options) {
 
     struct sockopt sock_options;
     size_t addrlen = sizeof(struct sockaddr_un);
-    int nonblock = options & PAL_OPTION_NONBLOCK ? SOCK_NONBLOCK : 0;
 
-    ret = ocall_listen(AF_UNIX, SOCK_STREAM | nonblock, 0, /*ipv6_v6only=*/0,
+    ret = ocall_listen(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, /*ipv6_v6only=*/0,
                        (struct sockaddr*)&addr, &addrlen, &sock_options);
     if (IS_ERR(ret))
         return unix_to_pal_error(ERRNO(ret));
@@ -226,9 +225,8 @@ static int pipe_connect(PAL_HANDLE* handle, const char* name, int options) {
 
     struct sockopt sock_options;
     unsigned int addrlen = sizeof(struct sockaddr_un);
-    int nonblock = options & PAL_OPTION_NONBLOCK ? SOCK_NONBLOCK : 0;
 
-    ret = ocall_connect(AF_UNIX, SOCK_STREAM | nonblock, 0, /*ipv6_v6only=*/0,
+    ret = ocall_connect(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, /*ipv6_v6only=*/0,
                         (const struct sockaddr*)&addr, addrlen, NULL, NULL, &sock_options);
     if (IS_ERR(ret))
         return unix_to_pal_error(ERRNO(ret));
@@ -391,7 +389,17 @@ static int64_t pipe_read(PAL_HANDLE handle, uint64_t offset, uint64_t len, void*
         if (!handle->pipe.ssl_ctx)
             return -PAL_ERROR_NOTCONNECTION;
 
-        bytes = _DkStreamSecureRead(handle->pipe.ssl_ctx, buffer, len);
+        while (1) {
+            bytes = _DkStreamSecureRead(handle->pipe.ssl_ctx, buffer, len);
+            if (bytes == -PAL_ERROR_TRYAGAIN && !handle->pipe.nonblocking) {
+                struct pollfd pfd = {.fd = handle->pipe.fd, .events = POLLIN, .revents = 0};
+                int ret = ocall_poll(&pfd, 1, -1);
+                if (IS_ERR(ret))
+                    return unix_to_pal_error(ERRNO(ret));
+                continue;
+            }
+            break;
+        }
     }
 
     return bytes;
@@ -428,7 +436,17 @@ static int64_t pipe_write(PAL_HANDLE handle, uint64_t offset, uint64_t len, cons
         if (!handle->pipe.ssl_ctx)
             return -PAL_ERROR_NOTCONNECTION;
 
-        bytes = _DkStreamSecureWrite(handle->pipe.ssl_ctx, buffer, len);
+        while (1) {
+            bytes = _DkStreamSecureWrite(handle->pipe.ssl_ctx, buffer, len);
+            if (bytes == -PAL_ERROR_TRYAGAIN && !handle->pipe.nonblocking) {
+                struct pollfd pfd = {.fd = handle->pipe.fd, .events = POLLOUT, .revents = 0};
+                int ret = ocall_poll(&pfd, 1, -1);
+                if (IS_ERR(ret))
+                    return unix_to_pal_error(ERRNO(ret));
+                continue;
+            }
+            break;
+        }
     }
 
     return bytes;
